@@ -1,12 +1,18 @@
 import json
 import os
-import time
 from pathlib import Path
 from dotenv import load_dotenv
 from groq import Groq
-from pydantic import BaseModel
 from pypdf import PdfReader
 from docx import Document
+from schemas import (
+    JobD,
+    Resume,
+    MatchResult,
+    jobD_schema,
+    resume_schema,
+    match_schema
+)
 
 load_dotenv()
 my_api_key = os.getenv("GROQ_API_KEY")
@@ -17,145 +23,57 @@ if not my_api_key:
 client = Groq(api_key=my_api_key)
 model = "openai/gpt-oss-120b"
 
-class JobD(BaseModel):
-    role: str
-    required_skills: list[str]
-    preferred_skills: list[str]
-    minimum_experience: float | None
-    education_requirements: list[str]
-    responsibilities: list[str]
+def parse_job_description(job_description):
 
-jobD_schema = JobD.model_json_schema()
+    system_prompt = f""" 
+    You are an expert HR assistant.
 
-job_description = """
-About Stripe
-Stripe is a financial infrastructure platform for businesses. Millions of companies—from the world’s largest enterprises to the most ambitious startups—use Stripe to accept payments, grow their revenue, and accelerate new business opportunities. Our mission is to increase the GDP of the internet, and we have a staggering amount of work ahead. That means you have an unprecedented opportunity to put the global economy within everyone’s reach while doing the most important work of your career.
+    Your job is to analyze job descriptions and extract
+    structured information from them.
 
-About the team
-Our internship program will provide an opportunity to work on meaningful products that will grow the GDP of the internet. Through the internship, you will work with many systems and technologies, gain experience in systems design and testing, and have opportunities to present your work to your team and the wider org. Each intern has a dedicated intern manager, and every project is part of the team’s roadmap and will directly help Stripe’s mission.
+    Return ONLY valid JSON matching this schema:
 
-What you’ll do
-Every internship at Stripe centers around a real, legitimate project that our customers urgently need, touching many parts of our operations and stack. We will support you in shipping it. Yes, you will actually ship it. Some recent projects include rebuilding our statistics aggregation service, building new service discovery systems, and many user facing projects like making it easy to understand error messages on Stripe Checkout. As a Stripe intern, you'll be tackling important projects to increase global commerce, while working alongside exceptional people who insist on doing their best work. You’ll learn from people with high standards who are great at inspiring others to do more and go further. We value technical and personal growth, and see our internship program as a vehicle to foster both.
+    {jobD_schema}
 
-Responsibilities
-Write software that will be used in production, and has meaningful impact to Stripe
-Give and receive technical feedback through code reviews or design discussions
-Collaborate with other engineers and cross-functional stakeholders to proactively seek and incorporate feedback
-Learn quickly by asking great questions, by working with your intern manager and teammates effectively, and by communicating the status of your work clearly
-Who you are
-We’re looking for someone who meets the minimum requirements to be considered for the role. If you meet these requirements, you are encouraged to apply. The preferred qualifications are a bonus, not a requirement.
+    IMPORTANT:
+    Do NOT return the schema itself.
+    Do NOT return fields like properties, title or type.
+    Fill the schema with actual information extracted from the job description.
 
-Minimum requirements
-A strong fundamental understanding of computer science through pursuit of a Bachelor’s, Master’s, or PhD degree in computer science, math, or a related discipline
-Some experience and familiarity with programming, either through side projects or classwork. We work mostly in Java, Ruby, JavaScript, Scala, and Go. We believe new programming languages can be learned if the fundamentals and general knowledge are present
-Experience from previous internships or other multi-person projects, including open source contributions, that demonstrate evaluating and receiving feedback from mentors, peers, and stakeholders
-Ability to learn unfamiliar systems and form an understanding of those systems, through independent research and working with a mentor and subject matter experts
-Preferred qualifications
-* At least 2 years of university education, or equivalent work experience
-One or more areas of specialized knowledge balanced with general skills and knowledge, such as knowing more frontend technologies and, at a high level, how a service handles an HTTP request
-Understanding and some experience writing high quality pull requests, with good test coverage, and working knowledge to complete projects with minimal defects
-Familiarity with navigating and managing your work in new code bases, with multiple languages
-Ability to write clearly to explain your work to stakeholders, team members, and other Stripes
-In-office expectations
-Office-assigned Stripes in most of our locations are currently expected to spend at least 50% of the time in a given month in their local office or with users. This expectation may vary depending on role, team and location. For example, Stripes in Stripe Delivery Center roles in Mexico City, Mexico, Bengaluru, India, and Dublin, Ireland work 100% from the office. Also, some teams have greater in-office attendance requirements, to appropriately support our users and workflows, which the hiring manager will discuss. This approach helps strike a balance between bringing people together for in-person collaboration and learning from each other, while supporting flexibility when possible.
-Pay and benefits
-Stripe does not yet include pay ranges in job postings in every country. Stripe strongly values pay transparency and is working toward pay transparency globally.
+    If minimum experience is not mentioned, return null.
+    If information for a list is missing, return an empty list.
+    Do not invent information.
+    """
 
-Office locations
+    user_prompt = f"""
+    Analyze the following job description:
 
-Bengaluru
+    {job_description}
+    """
 
-Team
+    messages = [
+        {
+            "role": "system",
+            "content": system_prompt
+        },
+        {
+            "role": "user",
+            "content": user_prompt
+        }
+    ]
 
-University
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=0,
+        response_format={
+            "type": "json_object"
+        }
+    )
 
-Job type
+    data = json.loads(response.choices[0].message.content)
 
-Intern
-
-Apply for this role 
-We look forward to hearing from you
-At Stripe, we're looking for people with passion, grit, and integrity. You're encouraged to apply even if your experience doesn't precisely match the job description. Your skills and passion will stand out—and set you apart—especially if your career has taken some extraordinary twists and turns. At Stripe, we welcome diverse perspectives and people who think rigorously and aren't afraid to challenge assumptions. Join us.
-"""
-
-system_prompt = f""" 
-You are an expert HR assistant.
-
-Your job is to analyze job descriptions and extract
-structured information from them.
-
-Return ONLY valid JSON matching this schema:
-{jobD_schema}
-IMPORTANT:
-Do NOT return the schema itself.
-Do NOT return fields like "properties", "title" or "type".
-Fill the schema with actual information extracted from the job description.
-
-If minimum experience is not mentioned, return null.
-If information for a list is missing, return an empty list.
-Do not invent information.
-"""
-
-
-user_prompt = f"""
-Analyze the following job description:
-
-{job_description}
-"""
-
-message_system = {
-    "role": "system",
-    "content": system_prompt
-}
-
-message_user = {
-    "role": "user",
-    "content": user_prompt
-}
-
-response_format = {
-    "type": "json_object",
-}
-
-messages=[message_system, message_user]
-
-response = client.chat.completions.create(model=model, messages=messages, temperature=0, response_format=response_format)
-
-answer = response.choices[0].message.content
-
-# print(answer)
-
-
-raw_json = answer
-job_data = json.loads(raw_json)
-job = JobD(**job_data)
-
-print(job.minimum_experience)
-print(job.education_requirements)
-print(job.role)
-
-class Experience(BaseModel):
-    company: str | None = None
-    duration: str | None = None
-    description: str | None = None
-    skills_user: list[str] = []
-
-class Resume(BaseModel):
-    name: str | None = None
-    email: str | None = None
-    phone: str | None = None
-    total_experience_years : float | None = None
-    skills: list[str] = []
-    experiences: list[Experience] = []
-    education: list[str] = []
-    projects: list[str] = []
-    certifications: list[str] = []
-
-resume_schema = Resume.model_json_schema()
-
-class MatchResult(BaseModel):
-    score: float
-    details: dict
+    return JobD(**data)
 
 def read_pdf(file_path):
     reader = PdfReader(file_path)
@@ -243,7 +161,6 @@ def resume_parser(resume_text):
     return resume
 
 def score_calc(job, resume):
-    match_schema = MatchResult.model_json_schema()
     prompt = f"""
     You are an HR recruiter.
 
@@ -280,53 +197,3 @@ def score_calc(job, resume):
     response = client.chat.completions.create(model=model, messages=messages, response_format=response_format)
     data = json.loads(response.choices[0].message.content)
     return MatchResult(**data)
-
-
-resume_folder = Path("resume")
-all_resume = []
-
-for file_path in resume_folder.iterdir():
-    if file_path.suffix.lower() not in [".pdf", ".docx"]:
-        continue
-    print("\nProcessing:", file_path.name)
-    resume_text = resume_reader(file_path)
-    parsed_resume=resume_parser(resume_text) 
-    time.sleep(5)
-    result = score_calc(job, parsed_resume)
-    time.sleep(5)
-    print("Score:", result.score)
-    all_resume.append({
-        "name": parsed_resume.name,
-        "score": result.score,
-        "details": result.details
-    })
-all_resume.sort(
-    key=lambda candidate: candidate["score"],
-    reverse=True
-)
-top_2 = all_resume[:2]
-worst_2 = all_resume[-2:]
-
-
-print("TOP 2 CANDIDATES")
-for candidate in top_2:
-
-    print(
-        candidate["name"],
-        "-",
-        candidate["score"],
-        "%"
-    )
-
-    print(candidate["details"])
-
-print("LOWEST 2 CANDIDATES")
-for candidate in worst_2:
-
-    print(
-        candidate["name"],
-        "-",
-        candidate["score"],
-        "%"
-    )
-    print(candidate["details"])
